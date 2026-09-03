@@ -89,6 +89,24 @@ make
 
 * Squeezebox differentiates between different players using the MAC-address. Squeezelite by default uses the host mac, and we would run into problems controlling multiple players from the same host. We therefor use the player MAC-address and try to retrieve it from the UUID string (assuming it will be always in the form `RINCON_<MAC><PORT>`).
 
+## Rejected approaches
+
+### ICY/Shoutcast in-band metadata
+
+To update the now-playing title during gapless playback (without restarting the stream), we investigated injecting Shoutcast-style ICY metadata blocks into the FLAC stream. This is a well-known radio-stream technique: the server advertises `icy-metaint: N` in the HTTP response, and after every N audio bytes it inserts a `StreamTitle='...';` metadata block that the client reads without treating as audio.
+
+The implementation was completed and tested — correct byteteller, exact chunk-splitting at `ICY_METAINT` boundaries, single-quote escaping, 0x00 "no update" block. However, Sonos never sends the `Icy-MetaData: 1` request header that is required to opt in to ICY injection for `audio/flac` streams. All test streams confirmed this:
+
+```
+stream 1: Icy-MetaData header = ''
+stream 2: Icy-MetaData header = ''
+stream 3: Icy-MetaData header = ''
+```
+
+Without the opt-in header, injecting ICY blocks corrupts the FLAC stream (Sonos reports `ERROR_CORRUPT_FILE`). This is consistent with documentation for philippe44's LMS-uPnP bridge, which also notes that Sonos does not support ICY metadata for FLAC streams.
+
+The ICY implementation has been removed. Track title and cover art are now set at stream start via `fetchLmsTrackInfo()` and `PlayStream()`. Gapless within-stream metadata updates remain an open problem.
+
 ## Related software
 
 * Philippe44 created the [LMS to UPnP bridge](https://github.com/philippe44/LMS-uPnP) which you may be able to use as Sonos supports UPnP.

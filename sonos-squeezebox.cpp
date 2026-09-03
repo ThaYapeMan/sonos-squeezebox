@@ -49,7 +49,6 @@ SONOS::PlayerPtr gPlayer;
 uint8_t gMac[6];
 volatile bool gEvent = true;
 static std::string gServer;
-static std::string gLastTrackId;
 
 static std::string urlEncode(std::string str)
 {
@@ -188,13 +187,6 @@ bool PlaySqueezeBox(unsigned stream_id)
         std::string title  = track.title.empty()      ? "Squeezebox"  : track.title;
         std::string artUrl = track.artworkUrl.empty() ? iconURL       : track.artworkUrl;
 
-        // Prime the ICY title and track-id baseline for the new stream
-        if (!track.id.empty()) {
-            gLastTrackId = track.id;
-            std::string icy = track.artist.empty() ? track.title : track.artist + " - " + track.title;
-            set_squeezebox_icy_title(icy);
-        }
-
         printf("PlaySqueezeBox: title='%s' art='%s'\n", title.c_str(), artUrl.c_str());
         return gPlayer->PlayStream(streamURL, title, artUrl);
     }
@@ -326,7 +318,6 @@ int main(int argc, char** argv)
 
     unsigned current_stream_id = 0;
     unsigned time_count = 0;
-    unsigned meta_count = 0;
 
     status.update();
 
@@ -335,19 +326,6 @@ int main(int argc, char** argv)
         if (stream_id != current_stream_id) {
             current_stream_id = stream_id;
             PlaySqueezeBox(stream_id);
-            meta_count = 0; // reset poll timer after a stream restart
-        }
-
-        // Poll LMS every 5 s for track changes during gapless playback
-        if (++meta_count >= 500 && !gServer.empty()) {
-            meta_count = 0;
-            TrackInfo t = fetchLmsTrackInfo(gServer, gMac);
-            if (!t.id.empty() && t.id != gLastTrackId) {
-                gLastTrackId = t.id;
-                std::string icy = t.artist.empty() ? t.title : t.artist + " - " + t.title;
-                set_squeezebox_icy_title(icy);
-                printf("Track changed (gapless): id=%s icy='%s'\n", t.id.c_str(), icy.c_str());
-            }
         }
 
         if ((time_count == 3000) || gEvent) {

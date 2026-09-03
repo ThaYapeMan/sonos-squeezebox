@@ -57,8 +57,5 @@ private:
 };
 }
 
-// Update the ICY "now-playing" title injected into the audio stream.
-// Thread-safe; callable from outside the streaming thread.
-void set_squeezebox_icy_title(const std::string& title);
 
 #endif /* SBSTREAMER_H */

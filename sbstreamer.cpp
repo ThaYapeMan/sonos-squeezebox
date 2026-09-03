@@ -36,42 +36,11 @@
 #define SBSTREAMER_TIMEOUT 10000
 #define SBSTREAMER_MAX_PLAYBACK 3
 #define SBSTREAMER_CHUNK 16384
-#define ICY_METAINT 8192
 
 using namespace NSROOT;
 
 volatile SBEncoder* g_enc = 0;
 std::mutex g_enc_mutex;
-
-static std::mutex g_icy_mutex;
-static std::string g_icy_title;
-
-void set_squeezebox_icy_title(const std::string& title)
-{
-    std::lock_guard<std::mutex> lock(g_icy_mutex);
-    g_icy_title = title;
-}
-
-// Returns an ICY metadata block ready for in-stream injection.
-// Empty title produces the single 0x00 "no update" byte.
-static std::string makeIcyBlock(const std::string& title)
-{
-    if (title.empty())
-        return std::string(1, '\0');
-
-    // Escape single quotes so StreamTitle='...'; isn't broken by the content
-    std::string escaped;
-    escaped.reserve(title.size());
-    for (char c : title)
-        if (c == '\'') { escaped += '\\'; escaped += '\''; } else escaped += c;
-
-    std::string meta = "StreamTitle='" + escaped + "';";
-    size_t nblocks = (meta.size() + 15) / 16;
-    std::string block(1, static_cast<char>(nblocks));
-    block += meta;
-    block.resize(1 + nblocks * 16, '\0');
-    return block;
-}
 
 extern "C" {
 void encode_squeezebox_audio(const char* data, int len)
@@ -209,22 +178,14 @@ void SBStreamer::streamSqueezeBox(handle* handle, int stream)
         printf("ERROR: overloaded http (load=%d)\n", m_playbackCount.Load());
         Reply429(handle);
     } else {
-        // --- Diagnostic: log all relevant request headers ---
         std::string icyReq = GetRequestHeader(handle, "Icy-MetaData");
         printf("stream %d: Icy-MetaData header = '%s'\n", stream, icyReq.c_str());
-
-        // ICY injection is ONLY enabled when the client explicitly asked for it.
-        // Any other value (empty, "0", absent) leaves the FLAC stream untouched.
-        bool sendIcy = (icyReq == "1");
-        printf("stream %d: ICY injection %s\n", stream, sendIcy ? "ENABLED" : "DISABLED - stream will be plain FLAC");
 
         std::string resp;
         resp.assign(RequestBroker::MakeResponseHeader(RequestBroker::Status_OK))
             .append("Content-Type: audio/flac\r\n")
-            .append("Transfer-Encoding: chunked\r\n");
-        if (sendIcy)
-            resp.append("icy-metaint: " + std::to_string(ICY_METAINT) + "\r\n");
-        resp.append("\r\n");
+            .append("Transfer-Encoding: chunked\r\n")
+            .append("\r\n");
 
         // --- Diagnostic: log the response headers (replace CRLF for readability) ---
         {
@@ -256,63 +217,13 @@ void SBStreamer::streamSqueezeBox(handle* handle, int stream)
 
             char* buf = new char[SBSTREAMER_CHUNK];
             int r = 0;
-            // icyOffset: audio bytes since the last ICY block (resets to 0 after each block).
-            // totalAudio: monotonically increasing audio-byte counter for logging.
-            size_t icyOffset  = 0;
-            size_t totalAudio = 0;
-            size_t icyBlocks  = 0;
 
             while (!IsAborted() && (r = enc->read(buf, SBSTREAMER_CHUNK, SBSTREAMER_TIMEOUT)) > 0) {
-                if (!sendIcy) {
-                    // Plain path: FLAC bytes are sent exactly as the encoder produced them.
-                    if (!sendChunk(handle, buf, (size_t)r))
-                        break;
-                } else {
-                    // ICY path: split at exact ICY_METAINT boundaries.
-                    int pos = 0;
-                    bool ok = true;
-                    while (pos < r && ok) {
-                        size_t toMeta = ICY_METAINT - icyOffset;
-                        size_t avail  = (size_t)(r - pos);
-                        size_t n      = (avail < toMeta) ? avail : toMeta;
-
-                        ok = sendChunk(handle, buf + pos, n);
-                        pos        += (int)n;
-                        icyOffset  += n;
-                        totalAudio += n;
-
-                        if (icyOffset == ICY_METAINT) {
-                            std::string title;
-                            {
-                                std::lock_guard<std::mutex> lock(g_icy_mutex);
-                                title = g_icy_title;
-                            }
-                            std::string block = makeIcyBlock(title);
-
-                            // Log the first 5 blocks and then every 500th (throttle after initial burst)
-                            if (icyBlocks < 5 || icyBlocks % 500 == 0) {
-                                printf("ICY block #%zu audio_offset=%zu block_size=%zu"
-                                       " bytes[0..3]=%02x %02x %02x %02x title='%s'\n",
-                                    icyBlocks, totalAudio, block.size(),
-                                    (unsigned char)block[0],
-                                    block.size() > 1 ? (unsigned char)block[1] : 0,
-                                    block.size() > 2 ? (unsigned char)block[2] : 0,
-                                    block.size() > 3 ? (unsigned char)block[3] : 0,
-                                    title.c_str());
-                            }
-
-                            ok = ok && sendChunk(handle, block.data(), block.size());
-                            icyOffset = 0;
-                            ++icyBlocks;
-                        }
-                    }
-                    if (!ok)
-                        break;
-                }
+                if (!sendChunk(handle, buf, (size_t)r))
+                    break;
             }
 
-            printf("stream %d: done. audio_bytes=%zu icy_blocks=%zu\n",
-                stream, totalAudio, icyBlocks);
+            printf("stream %d: done\n", stream);
 
             RequestBroker::Reply(handle, "0\r\n\r\n", 5);
             {
