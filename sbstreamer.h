@@ -47,6 +47,7 @@ private:
     LockedNumber<int> m_playbackCount;
 
     void streamSqueezeBox(handle* handle, int stream);
+    static bool sendChunk(handle* h, const char* data, size_t size);
 
     void Reply400(handle* handle);
     void Reply429(handle* handle);
@@ -55,4 +56,9 @@ private:
     std::string getParamValue(const std::vector<std::string>& params, const std::string& name);
 };
 }
+
+// Update the ICY "now-playing" title injected into the audio stream.
+// Thread-safe; callable from outside the streaming thread.
+void set_squeezebox_icy_title(const std::string& title);
+
 #endif /* SBSTREAMER_H */
