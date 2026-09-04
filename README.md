@@ -89,6 +89,8 @@ make
 
 * Squeezebox differentiates between different players using the MAC-address. Squeezelite by default uses the host mac, and we would run into problems controlling multiple players from the same host. We therefor use the player MAC-address and try to retrieve it from the UUID string (assuming it will be always in the form `RINCON_<MAC><PORT>`).
 
+* The LMS player name is registered as `<room> (Sonos)` (e.g. `Study (Sonos)`) instead of the internal `SONOS::<room>` notation. Because the name is visible in every LMS controller (including iPeng and Material Skin), it should be human-readable.
+
 ## Rejected approaches
 
 ### ICY/Shoutcast in-band metadata

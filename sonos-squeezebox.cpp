@@ -312,7 +312,7 @@ int main(int argc, char** argv)
             printf("Failed to start URL %s\n", url.c_str());
         }
     } else {
-        std::string name = "SONOS::" + std::string(room);
+        std::string name = std::string(room) + " (Sonos)";
         t = new std::thread(squeezelite_thread, server, name);
     }
 
