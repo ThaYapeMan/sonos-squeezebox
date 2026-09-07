@@ -47,6 +47,11 @@ static unsigned squeezebox_stream_id = 0;
 
 static bool silent = true;
 
+// Temporary diagnostic switch — remove once root cause of stutter is confirmed.
+// Set DISABLE_SONOS_POSITION_FIX=1 in the systemd unit to revert to pre-fix behaviour
+// (device_frames stays 0) without rebuilding. Restart the service; no make needed.
+static bool disable_position_fix = false;
+
 void new_squeezebox_stream_id(void)
 {
     ++squeezebox_stream_id;
@@ -125,7 +130,7 @@ static void* output_thread()
         //
         // Setting device_frames = frames_played_dmp - sonos_frames gives:
         //   ms_played ≈ sonos_ms   (+ sub-10 ms interpolation from now-updated)
-        {
+        if (!disable_position_fix) {
             u32_t sr = output.current_sample_rate;
             u32_t sonos_ms = get_sonos_position_ms();
             if (sonos_ms > 0 && sr > 0) {
@@ -154,6 +159,10 @@ static thread_type thread;
 void output_init_sonos(log_level level, unsigned output_buf_size, char* params, unsigned rates[], unsigned rate_delay)
 {
     loglevel = level;
+
+    disable_position_fix = (getenv("DISABLE_SONOS_POSITION_FIX") != NULL);
+    if (disable_position_fix)
+        printf("DISABLE_SONOS_POSITION_FIX set: UPnP position fix disabled\n");
 
     LOG_INFO("init output sonos");
 
