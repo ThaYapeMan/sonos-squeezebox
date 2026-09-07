@@ -135,4 +135,7 @@ The ICY implementation has been removed. Track title and cover art are now set a
 
 This project is licensed under the **GNU General Public License v3.0** (GPL-3.0). See the [LICENSE](LICENSE) file for the full text.
 
+Copyright (C) 2023 Martin van der Werff \<github (at) newinnovations.nl\>  
+Copyright (C) 2026 Jaap van Vliet
+
 The upstream project ([newinnovations/sonos-squeezebox](https://github.com/newinnovations/sonos-squeezebox)) is GPL-3.0. Both vendored submodules — noson and squeezelite — are also GPL-3.0. GPL-3.0 copyleft requires that derivative works and combined works remain under a GPL-compatible license; no more-restrictive outbound license (such as a noncommercial clause) can be applied.
