@@ -6,6 +6,16 @@ It builds on two excellent software projects, being Noson and Squeezelite. Noson
 equipment, primarily used in the Noson-app. Squeezelite is a headless C language client for LMS that is often used as a skeleton
 for larger projects.
 
+This repository is a fork of [newinnovations/sonos-squeezebox](https://github.com/newinnovations/sonos-squeezebox).
+
+## Changes in this fork
+
+* **Track metadata**: at stream start, the LMS CLI (port 9090) is queried for the current track's title, artist, album, and cover art. The title and artwork URL are passed to Sonos via `PlayStream()`. The MAC address is sent raw (not URL-encoded) — URL-encoding causes LMS to silently fail to match the player.
+
+* **Human-readable player name**: the player registers in LMS as `<room> (Sonos)` (e.g. `Study (Sonos)`) instead of the internal `SONOS::<room>` notation, so it shows up correctly in every LMS controller.
+
+* **Accurate playback position reporting**: squeezelite's internal position counter tracks how much audio has been decoded and sent to the encoder — this runs 1800 ms or more ahead of what actually comes out of the Sonos speaker, because Sonos adds its own network and playback buffer. This fork corrects the position reported to LMS by polling the real Sonos playback position via UPnP AVTransport `GetPositionInfo` (already part of the noson library) once per second. The result is stored in an `std::atomic<uint32_t>` in `sonos-position.cpp` and read by the output thread to compute `output.device_frames`, which feeds directly into slimproto's `ms_played` formula. LMS now receives the position that the speaker is actually at, not what the decoder is ahead of.
+
 ## Usage
 
 ```sh
@@ -13,16 +23,16 @@ for larger projects.
 ```
 
 * Connecting to Sonos. You specify the room or zone name of the player you want to control using the `--room` option. The application will
-scan the network for Sonos players. If this fails or if the players are located in a separate network you may provide the the IP-address of
+scan the network for Sonos players. If this fails or if the players are located in a separate network you may provide the IP-address of
 the Sonos player using the `--ip` option. This can be the IP-address of any player in the network as they generally find each other and provide
-the software with a complete list of available players. You may need to open a port in the firewall to allow access from the Sonos box to the `sonos-squeezebox` software. The first instance of the software will be listening on port 1400, additional instances with use 1401, 1402, etc.
+the software with a complete list of available players. You may need to open a port in the firewall to allow access from the Sonos box to the `sonos-squeezebox` software. The first instance of the software will be listening on port 1400, additional instances will use 1401, 1402, etc.
 
-* Connecting to the Logitech Media Server (LMS). The application searches for the squeezebox server by scanning the network. If this fails or if the server is located in a separate network you may provide the server address and port using the `--server` option.
+* Connecting to the Logitech Media Server (LMS). The application searches for the squeezebox server by scanning the network. If this fails or if the server is located in a separate network you may provide the server address using the `--server` option. Pass the hostname or IP address only — do **not** append a port. The slimproto protocol uses port 3483; port 9000 is the LMS web interface and will not work.
 
 ### Example
 
 ```text
-$ ./sonos-squeezebox --ip=192.168.15.247 --room=Bibliotheek --server=127.0.0.1:9000
+$ ./sonos-squeezebox --ip=192.168.15.247 --room=Bibliotheek --server=192.168.15.1
 
 
 | SONOS::Squeezebox -- deploy Sonos in a Logitech Media Server (LMS) streaming environment
@@ -62,7 +72,7 @@ apt-get install -y --no-install-recommends \
 ### Cloning
 
 ```sh
-git clone --recursive https://github.com/newinnovations/sonos-squeezebox.git
+git clone --recursive https://github.com/ThaYapeMan/sonos-squeezebox.git
 ```
 
 If you cloned without the `--recursive` option, you can initialize the sub-modules using:
@@ -77,19 +87,27 @@ git submodule update --init --recursive
 make
 ```
 
-## Technical challenges
+## Technical notes
 
 * Sonos buffers a lot and causes latency issues with other software. Similar stuff happened to the pulseaudio support in Noson and the Noson-app. A different solution was chosen here. We throttle the encoder to not encode more than 2 seconds of music in the future. This also keeps the squeezebox server happy as it does not really understand minutes of music being consumed in mere seconds.
 
-* Sonos sometimes gets greedy and requests the same stream twice. Streaming to multiple sinks is not supported in the software, so I my first idea was to cancel the first request and continue serving on the second. That doesn’t work. What works it to reject the second request, and continue serving on the first.
+* Sonos sometimes gets greedy and requests the same stream twice. Streaming to multiple sinks is not supported in the software, so the first idea was to cancel the first request and continue serving on the second. That doesn't work. What works is to reject the second request, and continue serving on the first.
 
-* Goal was to use squeezelite as much “out-of-the-box” as possible, by providing only a Sonos output module. But how to know when to start a (new) stream to the Sonos? Turned out that the output module receives a silent flag. Looking at transitions here is the solution. From silent to non-silent requires to start a new stream, from non-silent to silent needs to terminate the current stream which will stop the Sonos. While silent we do not stream silence over the network. During the playback of an album or playlist, the silent flag will not toggle between tracks so the stream continues nicely.
+* Goal was to use squeezelite as much "out-of-the-box" as possible, by providing only a Sonos output module. But how to know when to start a (new) stream to the Sonos? Turned out that the output module receives a silent flag. Looking at transitions here is the solution. From silent to non-silent requires to start a new stream, from non-silent to silent needs to terminate the current stream which will stop the Sonos. While silent we do not stream silence over the network. During the playback of an album or playlist, the silent flag will not toggle between tracks so the stream continues nicely.
 
-* Sonos does not support high quality streams,  but this is handled quite nicely by LMS. By only advertising support for 44k1 to the squeezebox server, streams are automatically sampled down by the server. No need for resampling in our client software.
+* Sonos does not support high quality streams, but this is handled quite nicely by LMS. By only advertising support for 44k1 to the squeezebox server, streams are automatically sampled down by the server. No need for resampling in our client software.
 
-* Squeezebox differentiates between different players using the MAC-address. Squeezelite by default uses the host mac, and we would run into problems controlling multiple players from the same host. We therefor use the player MAC-address and try to retrieve it from the UUID string (assuming it will be always in the form `RINCON_<MAC><PORT>`).
+* Squeezebox differentiates between different players using the MAC-address. Squeezelite by default uses the host MAC, and we would run into problems controlling multiple players from the same host. We therefore use the player MAC-address and try to retrieve it from the UUID string (assuming it will always be in the form `RINCON_<MAC><PORT>`). The MAC is sent to LMS as a raw colon-separated hex string; URL-encoding it causes LMS to silently fail to match the player.
 
-* The LMS player name is registered as `<room> (Sonos)` (e.g. `Study (Sonos)`) instead of the internal `SONOS::<room>` notation. Because the name is visible in every LMS controller (including iPeng and Material Skin), it should be human-readable.
+* The LMS player name is registered as `<room> (Sonos)` (e.g. `Study (Sonos)`) so it is human-readable in every LMS controller, including iPeng and Material Skin.
+
+* **Position reporting**: squeezelite's internal `frames_played` counter represents how much audio the decoder has processed, not what the speaker has actually output. Because Sonos adds a 1800 ms+ network and playback buffer, the LMS position display was always significantly ahead of the audible playback. The fix polls the actual Sonos position via UPnP AVTransport `GetPositionInfo` every second (noson caches the result, so only one network request per second is made) and uses the `RelTime` field to back-calculate `output.device_frames`. slimproto's existing `ms_played` formula then yields the Sonos position rather than the decode offset.
+
+## Known limitations
+
+* **Artist and album not shown on Sonos**: noson's `PlayStream()` interface accepts only a title and an artwork URL — there is no parameter for artist or album. The DIDL metadata sent to Sonos therefore lacks `dc:creator` and `upnp:album` fields. The Sonos app shows the track title and cover art correctly, but the artist and album lines remain empty. Fixing this would require extending noson's `PlayStream()` or bypassing it with a custom DIDL payload.
+
+* **Log output is buffered when running as a service**: the program writes to stdout, which the C runtime buffers when no terminal is attached. Running under systemd means `journalctl` shows nothing until the process exits. Use `ss -tnp` to inspect connection state while the process is running.
 
 ## Rejected approaches
 
@@ -112,3 +130,9 @@ The ICY implementation has been removed. Track title and cover art are now set a
 ## Related software
 
 * Philippe44 created the [LMS to UPnP bridge](https://github.com/philippe44/LMS-uPnP) which you may be able to use as Sonos supports UPnP.
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** (GPL-3.0). See the [LICENSE](LICENSE) file for the full text.
+
+The upstream project ([newinnovations/sonos-squeezebox](https://github.com/newinnovations/sonos-squeezebox)) is GPL-3.0. Both vendored submodules — noson and squeezelite — are also GPL-3.0. GPL-3.0 copyleft requires that derivative works and combined works remain under a GPL-compatible license; no more-restrictive outbound license (such as a noncommercial clause) can be applied.
