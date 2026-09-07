@@ -1,6 +1,6 @@
 FLAGS_SL = -g -O3 -Wall -fno-common -Isqueezelite
 
-OBJS = sonos-squeezebox.o sbstreamer.o sbencoder.o sonos-status.o
+OBJS = sonos-squeezebox.o sbstreamer.o sbencoder.o sonos-status.o sonos-position.o
 
 OBJS_SL = squeezelite.o \
 	output_sonos.o \

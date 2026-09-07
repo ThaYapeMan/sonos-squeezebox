@@ -25,6 +25,7 @@
 #include <sonossystem.h>
 
 #include "sbstreamer.h"
+#include "sonos-position.h"
 #include "sonos-status.h"
 
 extern "C" {
@@ -188,10 +189,21 @@ bool PlaySqueezeBox(unsigned stream_id)
         std::string artUrl = track.artworkUrl.empty() ? iconURL       : track.artworkUrl;
 
         printf("PlaySqueezeBox: title='%s' art='%s'\n", title.c_str(), artUrl.c_str());
+        // Reset position so the output thread reports 0 while Sonos buffers the new stream.
+        set_sonos_position_ms(0);
         return gPlayer->PlayStream(streamURL, title, artUrl);
     }
     printf("%s: service unavailable\n", __FUNCTION__);
     return false;
+}
+
+// Parse UPnP RelTime "H:MM:SS" -> milliseconds; returns 0 on parse failure.
+static uint32_t parse_reltime_ms(const std::string& rt)
+{
+    unsigned h = 0, m = 0, s = 0;
+    if (sscanf(rt.c_str(), "%u:%u:%u", &h, &m, &s) == 3)
+        return (h * 3600u + m * 60u + s) * 1000u;
+    return 0;
 }
 
 void flac_test();
@@ -326,6 +338,18 @@ int main(int argc, char** argv)
         if (stream_id != current_stream_id) {
             current_stream_id = stream_id;
             PlaySqueezeBox(stream_id);
+        }
+
+        // Poll actual Sonos playback position every iteration.
+        // noson caches GetPositionInfo for 1 s, so network traffic is ~1 req/s.
+        {
+            SONOS::ElementList posVars;
+            if (gPlayer->GetPositionInfo(posVars)) {
+                uint32_t ms = parse_reltime_ms(posVars.GetValue("RelTime"));
+                if (ms > 0)
+                    set_sonos_position_ms(ms);
+                // ms == 0: Sonos stopped/buffering; keep the atomic at 0 (set by PlaySqueezeBox).
+            }
         }
 
         if ((time_count == 3000) || gEvent) {

@@ -19,6 +19,7 @@
 
 #include "squeezelite.h"
 #include "output_sonos.h"
+#include "sonos-position.h"
 
 #if BYTES_PER_FRAME != 8
 #error BYTES_PER_FRAME not 8 bytes
@@ -110,10 +111,31 @@ static void* output_thread()
     while (running) {
 
         LOCK;
-        output.device_frames = 0;
         output.updated = gettime_ms();
         output.frames_played_dmp = output.frames_played;
         _output_frames(FRAME_BLOCK);
+
+        // Compute device_frames from the actual Sonos playback position so that
+        // slimproto's ms_played formula yields the Sonos position rather than the
+        // internal decode position (which runs 1800 ms+ ahead due to Sonos buffering).
+        //
+        // slimproto formula:
+        //   ms_played = (frames_played_dmp - device_frames) * 1000 / sample_rate
+        //               + (now - updated)
+        //
+        // Setting device_frames = frames_played_dmp - sonos_frames gives:
+        //   ms_played ≈ sonos_ms   (+ sub-10 ms interpolation from now-updated)
+        {
+            u32_t sr = output.current_sample_rate;
+            u32_t sonos_ms = get_sonos_position_ms();
+            if (sonos_ms > 0 && sr > 0) {
+                u64_t sonos_frames = (u64_t)sonos_ms * sr / 1000;
+                u64_t fp = (u64_t)output.frames_played_dmp;
+                output.device_frames = (fp > sonos_frames) ? (u32_t)(fp - sonos_frames) : 0;
+            } else {
+                output.device_frames = 0;
+            }
+        }
         UNLOCK;
 
         if (buffill) {
